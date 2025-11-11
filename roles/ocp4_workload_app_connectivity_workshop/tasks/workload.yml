@@ -3,6 +3,9 @@
 - name: Install OpenShift Gitops
   ansible.builtin.include_tasks: openshift_gitops.yml
 
+- name: Install cert-manager Operator + wait + ClusterIssuer
+  ansible.builtin.include_tasks: cert-manager.yml
+
 - name: Extract main_domain of AWS from r_openshift_subdomain
   set_fact:
     ocp4_workload_app_connectivity_workshop_main_domain: "{{ (r_openshift_subdomain.split('.') | reverse)[:3] | reverse | join('.')}}"

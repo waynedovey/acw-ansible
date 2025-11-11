@@ -1,0 +1,49 @@
+---
+# Install the Red Hat cert-manager Operator (cluster-wide)
+- name: Install cert-manager Operator (Red Hat)
+  include_role:
+    name: install_operator
+  vars:
+    install_operator_action: install
+    install_operator_name: openshift-cert-manager-operator
+    install_operator_packagemanifest_name: openshift-cert-manager-operator
+    install_operator_namespace: cert-manager-operator     # operator ns (OLM will create it)
+    install_operator_catalog: redhat-operators
+    install_operator_channel: stable-v1                   # default channel
+    install_operator_automatic_install_plan_approval: true
+    install_operator_manage_namespaces: []                # empty => AllNamespaces OperatorGroup
+
+# Wait for operand webhook endpoints to exist
+- name: Wait for cert-manager webhook Service endpoints
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Endpoints
+    name: cert-manager-webhook
+    namespace: cert-manager
+  register: r_cm_eps
+  retries: 40
+  delay: 6
+  until:
+    - r_cm_eps.resources | length > 0
+    - (r_cm_eps.resources[0].subsets | default([])) | length > 0
+
+# Also wait for CA injection into the ValidatingWebhookConfiguration (prevents TLS/startup flaps)
+- name: Wait for cert-manager ValidatingWebhookConfiguration to have a CA bundle
+  kubernetes.core.k8s_info:
+    api_version: admissionregistration.k8s.io/v1
+    kind: ValidatingWebhookConfiguration
+    name: cert-manager-webhook
+  register: r_vwc
+  retries: 40
+  delay: 6
+  until:
+    - r_vwc.resources | length > 0
+    - >
+      (
+        r_vwc.resources[0].webhooks | selectattr('clientConfig.caBundle','string') | list
+      ) | length > 0
+- name: Apply ClusterIssuer (production LE)
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'clusterissuer-letsencrypt-prod.yaml.j2') | from_yaml }}"
+

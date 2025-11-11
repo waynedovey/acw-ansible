@@ -1,0 +1,17 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ ocp4_workload_app_connectivity_workshop_clusterissuer_name | default("prod-web-lets-encrypt-issuer") }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  acme:
+    email: {{ ocp4_workload_app_connectivity_workshop_acme_email | quote }}
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: le-account-key
+    solvers:
+      - http01:
+          ingress:
+            class: {{ ocp4_workload_app_connectivity_workshop_ingress_class | default("openshift-default") | quote }}
+

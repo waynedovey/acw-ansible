@@ -4,6 +4,8 @@ kind: Application
 metadata:
   name: {{ ocp4_workload_app_connectivity_workshop_ingress_gateway_application_name }}
   namespace: {{ ocp4_workload_app_connectivity_workshop_argocd_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
   finalizers:
     - resources-finalizer.argocd.argoproj.io/foreground
 spec:

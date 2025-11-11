@@ -4,6 +4,8 @@ kind: Application
 metadata:
   name: operators-system
   namespace: {{ ocp4_workload_app_connectivity_workshop_argocd_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
   finalizers:
     - resources-finalizer.argocd.argoproj.io/foreground
 spec:
@@ -16,6 +18,7 @@ spec:
       prune: true
       selfHeal: true
     syncOptions:
+      - SkipDryRunOnMissingResource=true
       - ApplyOutOfSyncOnly=true
       - CreateNamespace=true
   source:
