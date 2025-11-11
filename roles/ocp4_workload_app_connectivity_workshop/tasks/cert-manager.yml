@@ -7,9 +7,9 @@
     install_operator_action: install
     install_operator_name: openshift-cert-manager-operator
     install_operator_packagemanifest_name: openshift-cert-manager-operator
-    install_operator_namespace: cert-manager-operator     # operator ns (OLM will create it)
+    install_operator_namespace: openshift-operators     # operator ns (OLM will create it)
     install_operator_catalog: redhat-operators
-    install_operator_channel: stable-v17                   # default channel
+    install_operator_channel: stable-v1                 # default channel
     install_operator_automatic_install_plan_approval: true
     install_operator_manage_namespaces: []                # empty => AllNamespaces OperatorGroup
 
