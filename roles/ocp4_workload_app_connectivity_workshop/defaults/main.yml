@@ -180,7 +180,7 @@ ocp4_workload_app_connectivity_workshop_openshift_gitops_resource_customizations
 
 ocp4_workload_app_connectivity_workshop_openshift_gitops_ignore_differences: {}
 
-ocp4_workload_app_connectivity_workshop_gitops_repo: https://github.com/app-connectivity-workshop/acw-helm.git
+ocp4_workload_app_connectivity_workshop_gitops_repo: https://github.com/waynedovey/acw-helm.git
 ocp4_workload_app_connectivity_workshop_gitops_repo_tag: main
 
 # ------------------------------------------------
@@ -310,7 +310,7 @@ ocp4_workload_app_connectivity_workshop_webterminal_operator_catalog_snapshot_im
 # ------------------------------------------------
 ocp4_workload_app_connectivity_workshop_showroom_deployment_type: helm
 ocp4_workload_app_connectivity_workshop_showroom_content_git_repo: >-
-  https://github.com/app-connectivity-workshop/showroom.git
+  https://github.com/waynedovey/showroom.git
 ocp4_workload_app_connectivity_workshop_showroom_content_git_repo_ref: main
 ocp4_workload_app_connectivity_workshop_showroom_content_only: false
 ocp4_workload_app_connectivity_workshop_showroom_namespace: showroom
