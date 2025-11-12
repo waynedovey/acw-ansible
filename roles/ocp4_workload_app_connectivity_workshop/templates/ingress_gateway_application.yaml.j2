@@ -33,12 +33,17 @@ spec:
               hostName: "*.{{ ocp4_workload_app_connectivity_workshop_sub_domain_name }}.{{ ocp4_workload_app_connectivity_workshop_main_domain }}"
           geoCode: {{ ocp4_workload_app_connectivity_workshop_gateway_geo_code }}
         dns:
-          routingStrategy: {{ ocp4_workload_app_connectivity_workshop_ingress_gateway_routing_strategy }}
+          routingStrategy: {{ ocp4_workload_app_connectivity_workshop_ingress_gateway_routing_strategy | default("loadbalanced") }}
           loadBalancing:
-            geo: 
-              defaultGeo: US
+            geo:
+              code: {{ ocp4_workload_app_connectivity_workshop_dnspolicy_geo_code | quote }}
+              default: {{ ocp4_workload_app_connectivity_workshop_dnspolicy_default | default(false) | to_json }}
             weighted:
-              defaultWeight: 120
+              defaultWeight: {{ ocp4_workload_app_connectivity_workshop_dnspolicy_weight | default(120) }}
+          healthCheck:
+            path: {{ ocp4_workload_app_connectivity_workshop_dnspolicy_health_path | default("/health") | quote }}
+            interval: {{ ocp4_workload_app_connectivity_workshop_dnspolicy_health_interval | default("1m") | quote }}
+            failureThreshold: {{ ocp4_workload_app_connectivity_workshop_dnspolicy_health_failure_threshold | default(3) }}
         tlsIssuer:
           email: {{ ocp4_workload_app_connectivity_workshop_ingress_gateway_tls_issuer_email }}
           privateKeySecretRef: {{ ocp4_workload_app_connectivity_workshop_ingress_gateway_tls_issuer_private_key_secret }}
