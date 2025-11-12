@@ -5,7 +5,7 @@ ansible-playbook playbooks/ocp4_workload_app_connectivity_workshop.yml -e ACTION
 
 Example runs for Region options
 
-Osaka / ap-northeast-3 (JP, default = true)
+Osaka / ap-northeast-3 (JP, default = true) site-c
 
 ansible-playbook playbooks/ocp4_workload_app_connectivity_workshop.yml \
   -e ACTION=create \
@@ -15,7 +15,7 @@ ansible-playbook playbooks/ocp4_workload_app_connectivity_workshop.yml \
   -e ocp4_workload_app_connectivity_workshop_dnspolicy_weight=120
 
 
-Seoul / ap-northeast-2 (KR, default = false)
+Seoul / ap-northeast-2 (KR, default = false) site-b 
 
 ansible-playbook playbooks/ocp4_workload_app_connectivity_workshop.yml \
   -e ACTION=create \

@@ -28,6 +28,8 @@ spec:
       values: |
         nameOverride: {{ ocp4_workload_app_connectivity_workshop_ingress_gateway_name }}
         gateway:
+          class: istio
+          name: api
           listeners:
             api:
               hostName: "*.{{ ocp4_workload_app_connectivity_workshop_sub_domain_name }}.{{ ocp4_workload_app_connectivity_workshop_main_domain }}"
@@ -35,11 +37,9 @@ spec:
         dns:
           routingStrategy: {{ ocp4_workload_app_connectivity_workshop_ingress_gateway_routing_strategy | default("loadbalanced") }}
           loadBalancing:
-            geo:
-              code: {{ ocp4_workload_app_connectivity_workshop_dnspolicy_geo_code | quote }}
-              default: {{ ocp4_workload_app_connectivity_workshop_dnspolicy_default | default(false) | to_json }}
-            weighted:
-              defaultWeight: {{ ocp4_workload_app_connectivity_workshop_dnspolicy_weight | default(120) }}
+            geoCode: {{ ocp4_workload_app_connectivity_workshop_dnspolicy_geo_code | quote }}
+            defaultGeo: {{ ocp4_workload_app_connectivity_workshop_dnspolicy_default | default(false) | to_json }}
+            weight: {{ ocp4_workload_app_connectivity_workshop_dnspolicy_weight | default(120) }}
           healthCheck:
             path: {{ ocp4_workload_app_connectivity_workshop_dnspolicy_health_path | default("/health") | quote }}
             interval: {{ ocp4_workload_app_connectivity_workshop_dnspolicy_health_interval | default("1m") | quote }}
