@@ -30,9 +30,10 @@ ansible-playbook playbooks/ocp4_workload_app_connectivity_workshop.yml \
   -e ocp4_workload_app_connectivity_workshop_dnspolicy_weight=120
 ```
 
-# RHCL (Kuadrant) Geo DNS with Existing Gateway
+# RHCL (Kuadrant) Geo DNS with Existing Gateway — Updated (PodSecurity-safe Demo)
 
-This guide enables **Geo DNS** across two OpenShift clusters (AWS **ap-northeast-2** & **ap-northeast-3**) using **Red Hat Connectivity Link (RHCL / Kuadrant)**, **Gateway API**, and your existing **Gateway** `ingress-gateway/prod-web` (listener `api`).
+This guide enables **Geo DNS** across two OpenShift clusters (AWS **ap-northeast-2** & **ap-northeast-3**) using **Red Hat Connectivity Link (RHCL / Kuadrant)**, **Gateway API**, and your existing **Gateway** `ingress-gateway/prod-web` (listener `api`).  
+**Update:** demo app now runs on **port 8080** with a restricted-friendly `securityContext` (no privileged ports), while the Service still exposes **port 80**.
 
 It assumes this repo drives your Argo CD apps and Helm values for platform charts (ingress-gateway, RHCL operator, Service Mesh, etc.).
 
@@ -86,7 +87,7 @@ RHCL keeps each CNAME **single-valued** (Route 53 requirement) while still provi
 
 You pass GEO and default flags **from the CLI**. Do **not** quote booleans.
 
-### Site‑c (Osaka, ap-northeast‑3) — **Default**
+### Site-c (Osaka, ap-northeast-3) — **Default**
 ```bash
 ansible-playbook playbooks/ocp4_workload_app_connectivity_workshop.yml \
   -e ACTION=create \
@@ -96,7 +97,7 @@ ansible-playbook playbooks/ocp4_workload_app_connectivity_workshop.yml \
   -e ocp4_workload_app_connectivity_workshop_dnspolicy_weight=120
 ```
 
-### Site‑b (Seoul, ap-northeast‑2)
+### Site-b (Seoul, ap-northeast-2)
 ```bash
 ansible-playbook playbooks/ocp4_workload_app_connectivity_workshop.yml \
   -e ACTION=create \
@@ -152,12 +153,12 @@ aws route53 list-resource-record-sets --hosted-zone-id <ZONE_ID> \
 You should see:
 - `*.travels.sandbox802.opentlc.com.` → `CNAME klb.travels.sandbox802.opentlc.com.`
 - `klb.travels.sandbox802.opentlc.com.` with Geo entries for `JP`, `KR`, and `default`
-- `jp.klb…` → ELB for ap‑northeast‑3, `kr.klb…` → ELB for ap‑northeast‑2
-- TXT ownership markers created by Kuadrant/external‑dns
+- `jp.klb…` → ELB for ap-northeast-3, `kr.klb…` → ELB for ap-northeast-2
+- TXT ownership markers created by Kuadrant/external-dns
 
 ---
 
-## End‑to‑end DNS checks
+## End-to-end DNS checks
 
 From anywhere:
 ```bash
@@ -165,7 +166,7 @@ dig whoami.travels.sandbox802.opentlc.com +short
 # Expect: whoami → klb → jp.klb (or kr.klb) → correct ELB by geo
 ```
 
-From inside each cluster (one‑shot pod; may need PodSecurity‑friendly spec):
+From inside each cluster (one-shot pod; may need PodSecurity-friendly spec):
 ```bash
 # JP cluster:
 oc -n ingress-gateway run dnscheck --image=busybox:1.36 --rm -it --restart=Never -- \
@@ -180,11 +181,13 @@ oc -n ingress-gateway run dnscheck --image=busybox:1.36 --rm -it --restart=Never
 
 ---
 
-## Optional: Demo app with **X‑Site** header
+## Optional: Demo app with **X-Site** header (PodSecurity **restricted** safe)
 
-Deploy the same app to both clusters; only the **HTTPRoute** header differs (JP vs KR).
+Deploy the same app to both clusters; only the **HTTPRoute** header differs (JP vs KR).  
+**Change:** the container listens on **8080** (non-privileged), Service exposes **80 → targetPort 8080**.
 
-### Common app (both clusters)
+### 1) Common app (both clusters)
+
 ```bash
 oc apply -f - <<'YAML'
 apiVersion: v1
@@ -199,16 +202,32 @@ metadata:
   namespace: whoami
 spec:
   replicas: 2
-  selector: { matchLabels: { app: whoami } }
+  selector:
+    matchLabels: { app: whoami }
   template:
-    metadata: { labels: { app: whoami } }
+    metadata:
+      labels: { app: whoami }
     spec:
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
       containers:
       - name: whoami
         image: ghcr.io/traefik/whoami:v1.10.2
-        ports: [{ containerPort: 80 }]
-        readinessProbe: { httpGet: { path: /, port: 80 }, initialDelaySeconds: 2, periodSeconds: 5 }
-        livenessProbe:  { httpGet: { path: /, port: 80 }, initialDelaySeconds: 5, periodSeconds: 10 }
+        args: ["--port", "8080"]
+        ports:
+        - containerPort: 8080
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities: { drop: ["ALL"] }
+        readinessProbe:
+          httpGet: { path: /, port: 8080 }
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        livenessProbe:
+          httpGet: { path: /, port: 8080 }
+          initialDelaySeconds: 5
+          periodSeconds: 10
 ---
 apiVersion: v1
 kind: Service
@@ -217,11 +236,14 @@ metadata:
   namespace: whoami
 spec:
   selector: { app: whoami }
-  ports: [{ name: http, port: 80, targetPort: 80 }]
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
 YAML
 ```
 
-### HTTPRoute on site‑c (JP, default)
+### 2) HTTPRoute on site-c (JP, default)
 ```bash
 oc apply -f - <<'YAML'
 apiVersion: gateway.networking.k8s.io/v1
@@ -245,7 +267,7 @@ spec:
 YAML
 ```
 
-### HTTPRoute on site‑b (KR)
+### 3) HTTPRoute on site-b (KR)
 ```bash
 oc apply -f - <<'YAML'
 apiVersion: gateway.networking.k8s.io/v1
@@ -269,7 +291,7 @@ spec:
 YAML
 ```
 
-### Validate
+### 4) Validate
 ```bash
 # Route attached?
 oc -n whoami get httproute whoami -o jsonpath='{.status.parents[*].conditions[?(@.type=="Accepted")].status}{"\n"}'
@@ -277,7 +299,7 @@ oc -n whoami get httproute whoami -o jsonpath='{.status.parents[*].conditions[?(
 # From your laptop:
 curl -sI https://whoami.travels.sandbox802.opentlc.com | grep -i ^x-site:
 
-# PodSecurity‑friendly curl pod:
+# PodSecurity-friendly curl pod:
 oc -n whoami apply -f - <<'YAML'
 apiVersion: v1
 kind: Pod
@@ -301,12 +323,12 @@ oc -n whoami exec -it pod/curl -- bash -lc 'microdnf -y install curl >/dev/null 
 ```
 
 Expected:
-- `X-Site: JP` when routed to **site‑c (ap‑northeast‑3)**
-- `X-Site: KR` when routed to **site‑b (ap‑northeast‑2)**
+- `X-Site: JP` when routed to **site-c (ap-northeast-3)**
+- `X-Site: KR` when routed to **site-b (ap-northeast-2)**
 
 ---
 
-## Health‑check & failover
+## Health-check & failover
 
 You enabled:
 ```yaml
@@ -341,14 +363,14 @@ healthCheck:
     ```bash
     oc get gatewayclass
     ```
-  - Make sure the **CRD app syncs before** the ingress‑gateway app (use Argo **sync waves**).
+  - Make sure the **CRD app syncs before** the ingress-gateway app (use Argo **sync waves**).
 
 - **DNSPolicy Enforced but no `dnsrecord` CRs:**
-  - That’s fine. Kuadrant may not emit per‑record CRs. Use **DNSPolicy status** and **Route 53** records.
+  - That’s fine. Kuadrant may not emit per-record CRs. Use **DNSPolicy status** and **Route 53** records.
 
 - **CNAME with multiple values error:**
-  - Ensure **all clusters** use **load‑balanced** `DNSPolicy` and only **one** has `defaultGeo: true`.
-  - Remove any manually‑created conflicting wildcard in the zone.
+  - Ensure **all clusters** use **load-balanced** `DNSPolicy` and only **one** has `defaultGeo: true`.
+  - Remove any manually-created conflicting wildcard in the zone.
 
 ---
 
