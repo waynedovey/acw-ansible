@@ -1,46 +1,49 @@
-# RHCL (Kuadrant) Geo DNS + Existing Gateway — JSON API Demo (PodSecurity‑safe)
+# RHCL (Kuadrant) Geo DNS with Existing Gateway — **Per‑Cluster Runbook** (JP & KR)
 
-This guide sets up **Geo DNS** across two OpenShift clusters using **Red Hat Connectivity Link (RHCL/Kuadrant)**, **Gateway API**, and your **existing Gateway**:
+This runbook deploys a **geo-routed, health-checked** API across **two OpenShift clusters** using **Red Hat Connectivity Link (RHCL/Kuadrant)**, the **Gateway API**, and your **existing Gateway**.  
+It’s formatted as **one clear section per cluster** so it’s unambiguous.
 
-- Clusters: **JP** (ap-northeast-3, “site‑c”) and **KR** (ap-northeast-2, “site‑b”)
-- Gateway: `ingress-gateway/prod-web` (listener `api`)
-- Domain: `api.travels.sandbox802.opentlc.com` (TLS via `api-tls`)
-- Demo App: `geoapi` with `/api/v1/info` and `/health`
-- Image: **public** `quay.io/wdovey/go-httpbin:latest` (runs on **8080**, PodSecurity “restricted” compatible)
-- Geo routing & health‑checked failover managed by **DNSPolicy**
+- **Clusters**
+  - **JP** = site‑c (AWS `ap-northeast-3`) → **Default** geo
+  - **KR** = site‑b (AWS `ap-northeast-2`)
+- **Gateway**: `ingress-gateway/prod-web` (listener `api`, TLS secret `api-tls` covering `*.travels.sandbox802.opentlc.com`)
+- **Public host**: `api.travels.sandbox802.opentlc.com` (exact host to avoid wildcard collisions)
+- **App**: `geoapi` (public image `quay.io/wdovey/go-httpbin:latest`, listens on **8080**, PodSecurity “restricted” compliant)
+- **Endpoints**
+  - `/api/v1/info` → rewrites to `/headers`, sets `X-Site` = **JP** or **KR**
+  - `/health` → rewrites to `/status/200` (used by DNS health checks)
+- **DNS**: Route53 hosted zone `travels.sandbox802.opentlc.com` managed by RHCL via **DNSPolicy**
 
-> We use a **single exact host** (`api.travels.sandbox802.opentlc.com`) to avoid wildcard route collisions with other demo apps on the same Gateway.
-
-
----
-
-## Prerequisites
-
-- RHCL (Kuadrant) installed on both clusters
-- Gateway API v1 CRDs and a working `GatewayClass` (e.g., `istio`)
-- Existing `Gateway` **prod-web** in namespace **ingress-gateway** with listener **api** and a certificate secret `api-tls` covering `*.travels.sandbox802.opentlc.com`
-- Route53 hosted zone `travels.sandbox802.opentlc.com` and AWS credentials with access to manage it
-- Credentials secret in **each** cluster/namespace:
-  ```yaml
-  apiVersion: v1
-  kind: Secret
-  type: kuadrant.io/aws
-  metadata:
-    name: prod-web-aws-credentials
-    namespace: ingress-gateway
-  data:
-    AWS_ACCESS_KEY_ID: <base64>
-    AWS_SECRET_ACCESS_KEY: <base64>
-    # optional:
-    # AWS_REGION: <base64 of ap-northeast-2>
-  ```
 
 ---
 
-## 1) Deploy the demo app (both clusters)
+## Prerequisites (both clusters)
+
+1) **RHCL (Kuadrant) installed** and healthy.  
+2) **Gateway API v1 CRDs** and `GatewayClass` (e.g., `istio`).  
+3) Existing **Gateway** `prod-web` in `ingress-gateway` with listener `api` and TLS secret `api-tls` for `*.travels.sandbox802.opentlc.com`.  
+4) **AWS Route53** hosted zone and **credentials** (per cluster) that can manage it:
+
+```yaml
+apiVersion: v1
+kind: Secret
+type: kuadrant.io/aws
+metadata:
+  name: prod-web-aws-credentials
+  namespace: ingress-gateway
+data:
+  AWS_ACCESS_KEY_ID: <base64>
+  AWS_SECRET_ACCESS_KEY: <base64>
+# optional:
+#  AWS_REGION: <base64 of ap-northeast-2>
+```
+
+---
+
+## Step 0 — Deploy the app (do this on **each** cluster)
 
 ```bash
-# Namespace + Deployment + Service (PodSecurity safe, listens on :8080)
+# Namespace + Deployment + Service (PodSecurity-safe; app listens on :8080)
 oc apply -f - <<'YAML'
 apiVersion: v1
 kind: Namespace
@@ -98,13 +101,10 @@ YAML
 
 ---
 
-## 2) HTTPRoute (attach to existing Gateway)
+# Cluster JP (site‑c, ap‑northeast‑3) — **Default site**
 
-- Hostname is **exact**: `api.travels.sandbox802.opentlc.com`
-- `/api/v1/info` → rewrites to `/headers` and sets `X-Site` header to **JP** or **KR**
-- `/health` → rewrites to `/status/200` (used by DNS health checks)
+### 1) HTTPRoute (attach to existing Gateway; set `X-Site: JP`)
 
-### Apply on **JP (site‑c, ap‑northeast‑3)** — set `X-Site: JP`
 ```bash
 oc apply -f - <<'YAML'
 apiVersion: gateway.networking.k8s.io/v1
@@ -154,7 +154,42 @@ spec:
 YAML
 ```
 
-### Apply on **KR (site‑b, ap‑northeast‑2)** — set `X-Site: KR`
+### 2) DNSPolicy (JP geo, **defaultGeo: true**)
+
+```bash
+oc -n ingress-gateway apply -f - <<'YAML'
+apiVersion: kuadrant.io/v1
+kind: DNSPolicy
+metadata:
+  name: prod-web-dnspolicy
+  namespace: ingress-gateway
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: prod-web
+    sectionName: api
+  providerRefs:
+    - name: prod-web-aws-credentials
+  loadBalancing:
+    geo: JP
+    defaultGeo: true
+    weight: 120
+  healthCheck:
+    protocol: HTTPS
+    port: 443
+    interval: 1m
+    failureThreshold: 3
+    path: /health
+YAML
+```
+
+---
+
+# Cluster KR (site‑b, ap‑northeast‑2)
+
+### 1) HTTPRoute (attach to existing Gateway; set `X-Site: KR`)
+
 ```bash
 oc apply -f - <<'YAML'
 apiVersion: gateway.networking.k8s.io/v1
@@ -204,40 +239,10 @@ spec:
 YAML
 ```
 
-> If you share the `prod-web/api` listener with other apps, **avoid wildcards** on those routes or use distinct hostnames to prevent 404s due to precedence.
+### 2) DNSPolicy (KR geo, **defaultGeo: false**)
 
-
----
-
-## 3) DNSPolicy (Geo + health‑checked failover)
-
-You can deploy via your **Ansible** playbook (recommended) or apply YAML directly.
-
-### Ansible (per cluster)
-> Don’t quote booleans.
-
-**JP (site‑c, default = true):**
 ```bash
-ansible-playbook playbooks/ocp4_workload_app_connectivity_workshop.yml \
-  -e ACTION=create \
-  -e ocp4_workload_app_connectivity_workshop_acme_email=wdovey@gmail.com \
-  -e ocp4_workload_app_connectivity_workshop_dnspolicy_geo_code=JP \
-  -e ocp4_workload_app_connectivity_workshop_dnspolicy_default=true \
-  -e ocp4_workload_app_connectivity_workshop_dnspolicy_weight=120
-```
-
-**KR (site‑b):**
-```bash
-ansible-playbook playbooks/ocp4_workload_app_connectivity_workshop.yml \
-  -e ACTION=create \
-  -e ocp4_workload_app_connectivity_workshop_acme_email=wdovey@gmail.com \
-  -e ocp4_workload_app_connectivity_workshop_dnspolicy_geo_code=KR \
-  -e ocp4_workload_app_connectivity_workshop_dnspolicy_default=false \
-  -e ocp4_workload_app_connectivity_workshop_dnspolicy_weight=120
-```
-
-### (Alt) YAML (adjust `geo`/`defaultGeo` per cluster)
-```yaml
+oc -n ingress-gateway apply -f - <<'YAML'
 apiVersion: kuadrant.io/v1
 kind: DNSPolicy
 metadata:
@@ -248,12 +253,12 @@ spec:
     group: gateway.networking.k8s.io
     kind: Gateway
     name: prod-web
-    # sectionName: api   # optional if policy is for the whole gateway
+    sectionName: api
   providerRefs:
     - name: prod-web-aws-credentials
   loadBalancing:
-    geo: JP|KR         # set per site
-    defaultGeo: true|false
+    geo: KR
+    defaultGeo: false
     weight: 120
   healthCheck:
     protocol: HTTPS
@@ -261,26 +266,17 @@ spec:
     interval: 1m
     failureThreshold: 3
     path: /health
+YAML
 ```
-
-**Resulting DNS shape:**
-```
-*.travels…     → CNAME klb.travels…
-klb.travels…   → CNAME {JP|KR|default} → {jp|kr}.klb.travels…
-{jp|kr}.klb…   → CNAME <site ELB>
-```
-RHCL keeps Route53’s single‑value CNAME requirement while enabling GEO + auto‑failover.
-
 
 ---
 
-## 4) Auth — open ONLY the demo endpoints
+## Auth — open only the demo endpoints (apply on **both** clusters)
 
-Keep your Gateway’s default **deny‑all** (`prod-web-deny-all`) for safety and allow just the **two demo paths** for this host.
+Keep the gateway’s default **deny-all** in place but allow **just** the two paths for the `travels…` host:
 
 ```bash
-# Apply on both clusters
-oc apply -f - <<'YAML'
+oc -n ingress-gateway apply -f - <<'YAML'
 apiVersion: kuadrant.io/v1
 kind: AuthPolicy
 metadata:
@@ -301,34 +297,19 @@ spec:
 YAML
 ```
 
-> If you prefer route‑scoped policy instead, use:
-> ```yaml
-> apiVersion: kuadrant.io/v1
-> kind: AuthPolicy
-> metadata: { name: geoapi-open, namespace: geoapi }
-> spec:
->   targetRef:
->     group: gateway.networking.k8s.io
->     kind: HTTPRoute
->     name: geoapi
->   rules:
->     authentication:
->       allow-anon:
->         anonymous: {}
-> ```
-> Note: a Gateway policy with `overrides` can trump route policies; the gateway override above is the simplest, least‑surprising option.
+> Optional: you can instead attach a route-scoped `AuthPolicy` that allows anonymous, but gateway overrides are the least surprising with multiple apps sharing a listener.
 
 
 ---
 
-## 5) Validate
+## Validate
 
 ```bash
 # App
 oc -n geoapi get deploy/geoapi
 oc -n geoapi logs deploy/geoapi | head
 
-# Route (expect Accepted=True, Programmed=True)
+# Route status (expect Accepted=True, ResolvedRefs=True; Programmed=True on some versions)
 oc -n geoapi get httproute geoapi -o jsonpath='{range .status.parents[*].conditions[*]}{.type}={.status}({.reason}){"\n"}{end}'
 
 # Gateway ELB
@@ -339,15 +320,15 @@ HOST=api.travels.sandbox802.opentlc.com
 curl -si https://$HOST/health | head -n1
 curl -sI  https://$HOST/api/v1/info | grep -i ^x-site:
 
-# Route53 view
-ZONE=<YOUR_HOSTED_ZONE_ID>   # e.g. Z069844912YJ8JXIMRL3Q
+# Route53 view (replace ZONE with your hosted zone ID)
+ZONE=Z069844912YJ8JXIMRL3Q
 aws route53 list-resource-record-sets --hosted-zone-id $ZONE \
   --query "ResourceRecordSets[?Name=='klb.travels.sandbox802.opentlc.com.']" --output table
 aws route53 list-resource-record-sets --hosted-zone-id $ZONE \
   --query "ResourceRecordSets[?Name=='jp.klb.travels.sandbox802.opentlc.com.' || Name=='kr.klb.travels.sandbox802.opentlc.com.']" --output table
 ```
 
-**Force hitting a specific site’s ELB (bypass Route53):**
+**Force-hit a specific site’s ELB (bypass Route53):**
 ```bash
 ELB=$(oc -n ingress-gateway get gateway prod-web -o jsonpath='{.status.addresses[0].value}')
 IP=$(dig +short $ELB | head -1)
@@ -359,7 +340,7 @@ curl -skI --resolve ${HOST}:443:${IP} https://${HOST}/api/v1/info | grep -i ^x-s
 
 ---
 
-## 6) Failover drill
+## Failover drill
 
 **Simulate failure** on one site by breaking `/health` rewrite to `/status/500`:
 
@@ -367,7 +348,7 @@ curl -skI --resolve ${HOST}:443:${IP} https://${HOST}/api/v1/info | grep -i ^x-s
 oc -n geoapi patch httproute geoapi --type=json -p='[
   {"op":"replace","path":"/spec/rules/1/filters/0/urlRewrite/path/replaceFullPath","value":"/status/500"}
 ]'
-# Watch DNSPolicy until it re-enforces, removing this geo from klb.*
+# Watch DNSPolicy enforce removal of that geo
 oc -n ingress-gateway describe dnspolicy prod-web-dnspolicy | egrep -A2 'Enforced|SubResourcesHealthy'
 ```
 
@@ -378,21 +359,19 @@ oc -n geoapi patch httproute geoapi --type=json -p='[
 ]'
 ```
 
-> Remember Route53 TTLs: `klb.*` is typically **300s**, ELB CNAMEs ~60s.
+> DNS TTLs: `klb.*` ~**300s**, ELB CNAMEs ~**60s**.
 
 
 ---
 
-## 7) Manual switchover (default site)
-
-Flip which geo answers **non‑geo** queries:
+## Manual switchover (default site)
 
 ```bash
-# Make KR the default
+# Make KR the default (run on KR cluster)
 oc -n ingress-gateway patch dnspolicy prod-web-dnspolicy --type=merge -p \
   '{"spec":{"loadBalancing":{"defaultGeo":true}}}'
 
-# Make JP the default
+# Make JP the default (run on JP cluster)
 oc -n ingress-gateway patch dnspolicy prod-web-dnspolicy --type=merge -p \
   '{"spec":{"loadBalancing":{"defaultGeo":false}}}'
 ```
@@ -400,30 +379,28 @@ oc -n ingress-gateway patch dnspolicy prod-web-dnspolicy --type=merge -p \
 
 ---
 
-## 8) Troubleshooting
+## Troubleshooting
 
-- **401 Unauthorized** with `www-authenticate: APIKEY` → an Authorino AuthPolicy is in effect. Use the gateway override above, or a route‑scoped allow‑anon.
-- **404 Not Found** from `istio-envoy` with `x-envoy-upstream-service-time: 0` → **routing mismatch** (no route matched). Ensure your HTTPRoute `hostnames` is **exact** and unique on the shared `prod-web/api` listener.
+- **401 Unauthorized** (`www-authenticate: APIKEY`) → another `AuthPolicy` applies. Use the gateway override above.
+- **404 Not Found** (`x-envoy-upstream-service-time: 0`) → no route match. Ensure `hostnames` is exact (`api.travels…`) and your routes don’t collide on `prod-web/api`.
   ```bash
   oc get httproute -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\t"}{.spec.hostnames}{"\t"}{range .spec.parentRefs[*]}{.namespace}/{.name}:{.sectionName}{" "}{end}{"\n"}{end}' \
   | grep 'ingress-gateway/prod-web:api'
   ```
-- **App port conflicts** → keep container on **8080**, Service on **80**; don’t bind to 80 in the container.
 - **SCC/UID errors** → don’t set `runAsUser`; keep `runAsNonRoot: true`, drop all capabilities.
-- **No DNSRecord CRs** → RHCL manages Route53 directly (you’ll see TXT ownership markers); check `DNSPolicy` status for `Enforced=True` and `SubResourcesHealthy=True`.
+- **No `DNSRecord` CRs** → expected; RHCL writes to Route53 directly. Check `DNSPolicy` for `Enforced=True` and `SubResourcesHealthy=True`.
 
 
 ---
 
-## 9) Clean up (demo only)
+## Cleanup (demo)
 
 ```bash
 oc -n geoapi delete httproute geoapi || true
 oc -n geoapi delete svc geoapi || true
 oc -n geoapi delete deploy geoapi || true
 oc delete ns geoapi || true
-# Auth and DNS policies (if you created them via YAML; keep if managed by Argo)
 oc -n ingress-gateway delete authpolicy geoapi-allow-overrides || true
-# oc -n geoapi delete authpolicy geoapi-open || true
+# If not managed by Argo:
 # oc -n ingress-gateway delete dnspolicy prod-web-dnspolicy || true
 ```
