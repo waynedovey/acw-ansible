@@ -1,57 +1,27 @@
-To run the playbook:
-
-## TLDR:
-
-```bash
-ansible-playbook playbooks/ocp4_workload_app_connectivity_workshop.yml -e ACTION=create -e ocp4_workload_app_connectivity_workshop_acme_email="wdovey@gmail.com"
-```
-
-Example runs for Region options
-
-Osaka / ap-northeast-3 (JP, default = true) site-c
-
-```bash
-ansible-playbook playbooks/ocp4_workload_app_connectivity_workshop.yml \
-  -e ACTION=create \
-  -e ocp4_workload_app_connectivity_workshop_acme_email=wdovey@gmail.com \
-  -e ocp4_workload_app_connectivity_workshop_dnspolicy_geo_code=JP \
-  -e ocp4_workload_app_connectivity_workshop_dnspolicy_default=true \
-  -e ocp4_workload_app_connectivity_workshop_dnspolicy_weight=120
-```
-
-Seoul / ap-northeast-2 (KR, default = false) site-b 
-
-```bash
-ansible-playbook playbooks/ocp4_workload_app_connectivity_workshop.yml \
-  -e ACTION=create \
-  -e ocp4_workload_app_connectivity_workshop_acme_email=wdovey@gmail.com \
-  -e ocp4_workload_app_connectivity_workshop_dnspolicy_geo_code=KR \
-  -e ocp4_workload_app_connectivity_workshop_dnspolicy_default=false \
-  -e ocp4_workload_app_connectivity_workshop_dnspolicy_weight=120
-```
-
 # RHCL (Kuadrant) Geo DNS with Existing Gateway — JSON API Demo (PodSecurity‑safe)
 
-This guide enables **Geo DNS** across two OpenShift clusters (AWS **ap-northeast-2** & **ap-northeast-3**) using **Red Hat Connectivity Link (RHCL / Kuadrant)**, **Gateway API**, and your existing **Gateway** `ingress-gateway/prod-web` (listener `api`).
+This guide enables **Geo DNS** across two OpenShift clusters (AWS **ap‑northeast‑2** & **ap‑northeast‑3**) using **Red Hat Connectivity Link (RHCL / Kuadrant)**, **Gateway API**, and your existing **Gateway** `ingress-gateway/prod-web` (listener `api`).
 
 It deploys a small **JSON API** (`geoapi`) with `/api/v1/info` and `/health` endpoints, designed to be **PodSecurity (restricted)** friendly and to participate in **automatic DNS failover** via RHCL health checks.
 
-**Image:** `quay.io/wdovey/go-httpbin:latest` (public).
+**Image (public):** `quay.io/wdovey/go-httpbin:latest`  
+**Domain:** `*.travels.sandbox802.opentlc.com`  
+**Sites:** JP (**ap‑northeast‑3**, default), KR (**ap‑northeast‑2**)
 
 ---
 
 ## What you get
 
-A single wildcard hostname `*.travels.sandbox802.opentlc.com` that geo-routes requests:
+A single wildcard hostname `*.travels.sandbox802.opentlc.com` that geo‑routes requests:
 
 ```
 *.travels…  →  CNAME  klb.travels…
 klb.travels… →  Geo CNAMEs:  JP → jp.klb…,  KR → kr.klb…,  default → <default site>
-jp.klb…     →  ELB of site-c (ap-northeast-3)
-kr.klb…     →  ELB of site-b (ap-northeast-2)
+jp.klb…     →  ELB of site‑c (ap‑northeast‑3)
+kr.klb…     →  ELB of site‑b (ap‑northeast‑2)
 ```
 
-RHCL keeps each CNAME **single-valued** (Route 53 requirement) while providing GEO routing and **health-checked failover**.
+RHCL keeps each CNAME **single‑valued** (Route 53 requirement) while providing GEO routing and **health‑checked failover**.
 
 ---
 
@@ -80,8 +50,7 @@ RHCL keeps each CNAME **single-valued** (Route 53 requirement) while providing G
     # optional:
     AWS_REGION: <base64 of ap-northeast-2>
   ```
-
-> Tip: restrict the IAM user to the hosted zone for least privilege.
+  > Tip: restrict the IAM user to the hosted zone for least privilege.
 
 ---
 
@@ -89,7 +58,7 @@ RHCL keeps each CNAME **single-valued** (Route 53 requirement) while providing G
 
 Pass GEO and default flags **from the CLI**. Do **not** quote booleans.
 
-### Site‑c (Osaka, ap‑northeast‑3) — make default (example)
+### Site‑c (Osaka, ap‑northeast‑3) — make **default** (example)
 ```bash
 ansible-playbook playbooks/ocp4_workload_app_connectivity_workshop.yml \
   -e ACTION=create \
@@ -125,9 +94,12 @@ dns:
 
 ---
 
-## Deploy the JSON API app (both clusters)
+## Deploy the JSON API App (both clusters)
 
-App listens on **8080** (non‑privileged) and the Service exposes **80 → targetPort 8080**. No fixed UID; OpenShift assigns a UID from the namespace’s range.
+- Listens on **8080** (non‑privileged)
+- Service exposes **80 → targetPort 8080**
+- **Explicit command** + args required (avoid “executable `--port` not found”)
+- No fixed UID; OpenShift assigns from namespace range
 
 ```bash
 # Namespace + Deployment + Service
@@ -155,7 +127,8 @@ spec:
       containers:
       - name: geoapi
         image: quay.io/wdovey/go-httpbin:latest
-        args: ["--port", "8080"]
+        command: ["/bin/go-httpbin"]
+        args: ["-port=8080"]
         ports:
         - containerPort: 8080
         securityContext:
@@ -190,7 +163,7 @@ YAML
 ## HTTPRoute per site (attach to existing Gateway)
 
 Two rules:
-- `/api/v1/info` → rewrites to `/headers` (JSON) and sets `X‑Site` header (`JP` or `KR`).
+- `/api/v1/info` → rewrites to `/headers` (JSON) and sets `X-Site` header (`JP` or `KR`).
 - `/health` → rewrites to `/status/200` (used by RHCL DNS health checks).
 
 > Use wildcard `hostnames` so health checks work across `jp.klb...` / `kr.klb...` names.
@@ -304,16 +277,17 @@ YAML
 oc -n geoapi get httproute geoapi -o jsonpath='{.status.parents[*].conditions[?(@.type=="Accepted")].status}{"\n"}'
 oc -n geoapi get httproute geoapi -o jsonpath='{.status.parents[*].conditions[?(@.type=="Programmed")].status}{"\n"}'
 
+# App logs
+oc -n geoapi logs deploy/geoapi | head
+
 # Hit the JSON API (response includes headers with X-Site)
 curl -s https://api.travels.sandbox802.opentlc.com/api/v1/info | jq '.headers["X-Site"]'
 curl -sI https://api.travels.sandbox802.opentlc.com/api/v1/info | grep -i ^x-site:
 
 # Health endpoint (should be 200)
 curl -si https://api.travels.sandbox802.opentlc.com/health | head -n1
-```
 
-**Route 53 view:**
-```bash
+# DNS view (Route 53)
 aws route53 list-resource-record-sets --hosted-zone-id <ZONE_ID> \
   --query "ResourceRecordSets[?contains(Name, 'travels.sandbox802.opentlc.com.')]" \
   --output table
@@ -357,13 +331,28 @@ oc -n geoapi patch httproute geoapi --type=json -p='[
 
 ---
 
+## Persist in IaC (avoid Argo drift)
+
+Set these in your Ansible/values per cluster so Argo doesn’t revert changes:
+
+- **KR (site‑b)**  
+  `ocp4_workload_app_connectivity_workshop_dnspolicy_geo_code=KR`  
+  `ocp4_workload_app_connectivity_workshop_dnspolicy_default=true`
+
+- **JP (site‑c)**  
+  `ocp4_workload_app_connectivity_workshop_dnspolicy_geo_code=JP`  
+  `ocp4_workload_app_connectivity_workshop_dnspolicy_default=false`
+
+---
+
 ## Troubleshooting
 
 - **SCC/UID error:** do **not** set a fixed `runAsUser`. Let OpenShift assign a UID; keep `runAsNonRoot: true` and `capabilities: { drop: ["ALL"] }`.
-- **Bind to port 80 fails:** use **8080** in the container; keep **Service port 80 → targetPort 8080**.
-- **Route not accepted/programmed:** check `GatewayClass`, listener `api`, and Gateway API v1 CRDs.
-- **DNS not flipping:** verify DNSPolicy status (`Accepted/Enforced/Healthy`), check Route53 records, and wait for the `klb.*` TTL.
-- **Argo drift:** persist `defaultGeo` and per‑site `geoCode` in IaC so Git doesn’t revert your change.
+- **`listen tcp :80: permission denied`:** use **8080** in the container; keep **Service port 80 → targetPort 8080**.
+- **`executable file '--port' not found`:** set `command: ["/bin/go-httpbin"]` and `args: ["-port=8080"]`.
+- **HTTPRoute rejected:** ensure `type: Exact|PathPrefix|RegularExpression` (not `PathExact`), correct `parentRefs.sectionName=api`.
+- **Tokens expired:** prefer `oc --context <ctx>` to avoid mid‑session token issues.
+- **DNS not flipping:** verify DNSPolicy `Accepted/Enforced/Healthy`, check Route53, wait out `klb.*` TTL.
 
 ---
 
