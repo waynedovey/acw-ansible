@@ -29,11 +29,14 @@ ansible-playbook playbooks/ocp4_workload_app_connectivity_workshop.yml \
   -e ocp4_workload_app_connectivity_workshop_dnspolicy_default=false \
   -e ocp4_workload_app_connectivity_workshop_dnspolicy_weight=120
 ```
-# RHCL (Kuadrant) Geo DNS with Existing Gateway — JSON API Demo (PodSecurity-safe)
+
+# RHCL (Kuadrant) Geo DNS with Existing Gateway — JSON API Demo (PodSecurity‑safe)
 
 This guide enables **Geo DNS** across two OpenShift clusters (AWS **ap-northeast-2** & **ap-northeast-3**) using **Red Hat Connectivity Link (RHCL / Kuadrant)**, **Gateway API**, and your existing **Gateway** `ingress-gateway/prod-web` (listener `api`).
 
-It also deploys a small **JSON API** (`geoapi`) with `/api/v1/info` and `/health` endpoints, designed to be **PodSecurity (restricted)** friendly and to participate in **automatic DNS failover** via RHCL health checks.
+It deploys a small **JSON API** (`geoapi`) with `/api/v1/info` and `/health` endpoints, designed to be **PodSecurity (restricted)** friendly and to participate in **automatic DNS failover** via RHCL health checks.
+
+**Image:** `quay.io/wdovey/go-httpbin:latest` (public).
 
 ---
 
@@ -48,7 +51,7 @@ jp.klb…     →  ELB of site-c (ap-northeast-3)
 kr.klb…     →  ELB of site-b (ap-northeast-2)
 ```
 
-RHCL keeps each CNAME **single-valued** (Route 53 requirement) while providing GEO routing and **health‑checked failover**.
+RHCL keeps each CNAME **single-valued** (Route 53 requirement) while providing GEO routing and **health-checked failover**.
 
 ---
 
@@ -57,7 +60,7 @@ RHCL keeps each CNAME **single-valued** (Route 53 requirement) while providing G
 - **RHCL operator (Kuadrant)** installed on both clusters.
 - **Gateway API v1 CRDs** present on both clusters.
 - **GatewayClass** provided by your Mesh/Ingress (e.g., `istio`) installed.
-- Existing **Gateway** (already present in your clusters):
+- Existing **Gateway** (already present):
   - Namespace: `ingress-gateway`
   - Name: `prod-web`
   - Listener: `api`
@@ -74,11 +77,11 @@ RHCL keeps each CNAME **single-valued** (Route 53 requirement) while providing G
   data:
     AWS_ACCESS_KEY_ID: <base64>
     AWS_SECRET_ACCESS_KEY: <base64>
-    # optional but recommended:
+    # optional:
     AWS_REGION: <base64 of ap-northeast-2>
   ```
 
-> Tip: restrict the IAM user to the specific hosted zone for least privilege.
+> Tip: restrict the IAM user to the hosted zone for least privilege.
 
 ---
 
@@ -124,7 +127,7 @@ dns:
 
 ## Deploy the JSON API app (both clusters)
 
-This app listens on **8080** (non‑privileged) and the Service exposes **80 → targetPort 8080**. No fixed UID is set; OpenShift assigns a UID from the namespace’s range.
+App listens on **8080** (non‑privileged) and the Service exposes **80 → targetPort 8080**. No fixed UID; OpenShift assigns a UID from the namespace’s range.
 
 ```bash
 # Namespace + Deployment + Service
@@ -151,7 +154,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
       - name: geoapi
-        image: ghcr.io/mccutchen/go-httpbin/v2:latest
+        image: quay.io/wdovey/go-httpbin:latest
         args: ["--port", "8080"]
         ports:
         - containerPort: 8080
@@ -187,10 +190,10 @@ YAML
 ## HTTPRoute per site (attach to existing Gateway)
 
 Two rules:
-- `/api/v1/info` → rewrites to `/headers` (JSON) and sets `X-Site` header (`JP` or `KR`).
-- `/health` → rewrites to `/status/200` (this is used by RHCL for DNS health checks).
+- `/api/v1/info` → rewrites to `/headers` (JSON) and sets `X‑Site` header (`JP` or `KR`).
+- `/health` → rewrites to `/status/200` (used by RHCL DNS health checks).
 
-> Using wildcard `hostnames` keeps the health check working across `jp.klb...` / `kr.klb...` names.
+> Use wildcard `hostnames` so health checks work across `jp.klb...` / `kr.klb...` names.
 
 ### Site‑c (Osaka, **JP**) route
 ```bash
@@ -301,11 +304,11 @@ YAML
 oc -n geoapi get httproute geoapi -o jsonpath='{.status.parents[*].conditions[?(@.type=="Accepted")].status}{"\n"}'
 oc -n geoapi get httproute geoapi -o jsonpath='{.status.parents[*].conditions[?(@.type=="Programmed")].status}{"\n"}'
 
-# Hit the JSON API (response contains headers, including X-Site)
+# Hit the JSON API (response includes headers with X-Site)
 curl -s https://api.travels.sandbox802.opentlc.com/api/v1/info | jq '.headers["X-Site"]'
 curl -sI https://api.travels.sandbox802.opentlc.com/api/v1/info | grep -i ^x-site:
 
-# Health endpoint (should be 200; TLS is terminated at the Gateway)
+# Health endpoint (should be 200)
 curl -si https://api.travels.sandbox802.opentlc.com/health | head -n1
 ```
 
@@ -320,7 +323,7 @@ aws route53 list-resource-record-sets --hosted-zone-id <ZONE_ID> \
 
 ## Force switchover / failover
 
-### Flip the **default** site (affects non-geo clients)
+### Flip the **default** site (affects non‑geo clients)
 ```bash
 # KR (site-b)
 oc -n ingress-gateway patch dnspolicy prod-web-dnspolicy --type=merge -p \
@@ -356,11 +359,11 @@ oc -n geoapi patch httproute geoapi --type=json -p='[
 
 ## Troubleshooting
 
-- **SCC error (UID range / anyuid forbidden):** do **not** set a fixed `runAsUser`. Let OpenShift assign a UID; keep `runAsNonRoot: true` and `capabilities: {drop: ["ALL"]}`.
-- **Bind to port 80 fails (`permission denied`):** use **8080** in the container and **Service port 80 → targetPort 8080**.
-- **Route not accepted/programmed:** check `GatewayClass` availability, listener name `api`, and that Gateway API v1 CRDs exist.
-- **DNS not flipping:** verify DNSPolicy `Accepted/Enforced/Healthy`, check Route53 records, and wait out the `klb.*` TTL.
-- **Argo drift:** persist `defaultGeo` and `geoCode` in your IaC (Ansible/values) so Argo doesn’t revert at next sync.
+- **SCC/UID error:** do **not** set a fixed `runAsUser`. Let OpenShift assign a UID; keep `runAsNonRoot: true` and `capabilities: { drop: ["ALL"] }`.
+- **Bind to port 80 fails:** use **8080** in the container; keep **Service port 80 → targetPort 8080**.
+- **Route not accepted/programmed:** check `GatewayClass`, listener `api`, and Gateway API v1 CRDs.
+- **DNS not flipping:** verify DNSPolicy status (`Accepted/Enforced/Healthy`), check Route53 records, and wait for the `klb.*` TTL.
+- **Argo drift:** persist `defaultGeo` and per‑site `geoCode` in IaC so Git doesn’t revert your change.
 
 ---
 
@@ -371,4 +374,3 @@ oc -n geoapi delete svc geoapi || true
 oc -n geoapi delete deploy geoapi || true
 oc delete ns geoapi || true
 ```
-
