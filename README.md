@@ -43,7 +43,6 @@ data:
 ## Step 0 — Deploy the app (do this on **each** cluster)
 
 ```bash
-# Namespace + Deployment + Service (PodSecurity-safe; app listens on :8080)
 oc apply -f - <<'YAML'
 apiVersion: v1
 kind: Namespace
